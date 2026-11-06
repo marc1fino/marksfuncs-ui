@@ -1,6 +1,7 @@
 """Workspace compatibility, validation, and existing-file protection."""
 
 from copy import deepcopy
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -35,6 +36,22 @@ class SessionTests(unittest.TestCase):
         save_session(self.path, state)
         self.assertEqual(load_session(self.path), state)
         self.assertEqual(list(Path(self.directory.name).iterdir()), [self.path])
+
+    def test_existing_v1_session_survives_language_change_without_resetting_values(self):
+        historical = {
+            "version": 1,
+            "selected": "ExpressionFunction",
+            "functions": {
+                "Linear": {"parameters": {"m": 2.34567891, "b": -3.25}, "x_range": [-4.5, 8.25], "points": 777},
+                "ExpressionFunction": {"parameters": {"expression": "sin(x) + 0.2*x**2"}, "x_range": [-6, 6], "points": 401},
+            },
+            "comparisons": [{"key": "Linear", "parameters": {"m": -1.5, "b": 2}, "x_range": [-5, 5], "points": 251}],
+        }
+        self.path.write_text(json.dumps(historical), encoding="utf-8")
+        restored = load_session(self.path)
+        self.assertEqual(restored, historical)
+        save_session(self.path, restored)
+        self.assertEqual(load_session(self.path), historical)
 
     def test_validation_does_not_share_mutable_data(self):
         state = workspace()

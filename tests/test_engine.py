@@ -29,7 +29,7 @@ class LibraryIntegrationTests(unittest.TestCase):
             with self.subTest(function=spec.key):
                 if unavailable_reason(spec):
                     self.assertIn(spec.key, {"SineFresnel", "CosineFresnel"})
-                    with self.assertRaisesRegex(CalculationError, "no implementa graph"):
+                    with self.assertRaisesRegex(CalculationError, "does not implement graph"):
                         compute_curve(spec)
                     continue
                 result = compute_curve(spec)
@@ -52,8 +52,55 @@ class LibraryIntegrationTests(unittest.TestCase):
 
     def test_upstream_errors_are_reported_without_fallback(self):
         with patch.object(library.Linear, "graph", side_effect=RuntimeError("library failed")):
-            with self.assertRaisesRegex(CalculationError, "library failed"):
+            with self.assertRaisesRegex(CalculationError, "library failed") as raised:
                 compute_curve("Linear")
+        self.assertEqual(raised.exception.source, "marksfuncs")
+
+    def test_every_available_class_uses_its_original_graph_samples(self):
+        for spec in CATALOG:
+            if unavailable_reason(spec):
+                continue
+            with self.subTest(function=spec.key):
+                calls = []
+
+                def sentinel_graph(instance):
+                    calls.append(instance)
+                    plt.figure()
+                    plt.plot([11, 19], [1234, 5678], label="original library samples")
+                    plt.show()
+
+                library_class = getattr(library, spec.key)
+                with patch.object(library_class, "graph", sentinel_graph):
+                    result = compute_curve(spec)
+                self.assertEqual(len(calls), 1)
+                self.assertIsInstance(calls[0], library_class)
+                np.testing.assert_array_equal(result.x, [11, 19])
+                np.testing.assert_array_equal(result.y, [1234, 5678])
+
+    def test_expression_notation_is_normalized_before_real_library_evaluation(self):
+        expression = "ln(x) + x^2"
+        normalized = "log(x) + x**2"
+        graph = library.ExpressionFunction.graph
+        received = []
+
+        def record_original_graph(instance):
+            received.append(instance.expression)
+            graph(instance)
+
+        with patch.object(library.ExpressionFunction, "graph", record_original_graph):
+            result = compute_curve("ExpressionFunction", {"expression": expression}, (0.1, 3), 31)
+        direct = compute_curve("ExpressionFunction", {"expression": normalized}, (0.1, 3), 31)
+        self.assertEqual(received, [normalized])
+        np.testing.assert_array_equal(result.x, direct.x)
+        np.testing.assert_array_equal(result.y, direct.y)
+
+    def test_default_expression_runs_without_adapter_fallback(self):
+        graph = library.ExpressionFunction.graph
+        with patch.object(library.ExpressionFunction, "graph", autospec=True, side_effect=graph) as called:
+            result = compute_curve("ExpressionFunction")
+        called.assert_called_once()
+        self.assertEqual(called.call_args.args[0].expression, BY_KEY["ExpressionFunction"].defaults()["expression"])
+        self.assertEqual(np.isfinite(result.y).sum(), len(result.x))
 
     def test_figures_are_cleaned_and_existing_figures_preserved(self):
         figure = plt.figure("Existing external figure")
@@ -92,11 +139,28 @@ class LibraryIntegrationTests(unittest.TestCase):
         self.assertTrue(curve.warnings)
 
     def test_entirely_invalid_expression_has_actionable_error(self):
-        with self.assertRaisesRegex(CalculationError, "valores finitos"):
+        with self.assertRaisesRegex(CalculationError, "no finite real samples") as raised:
             compute_curve("ExpressionFunction", {"expression": "sqrt(-1)"})
+        self.assertEqual(raised.exception.source, "marksfuncs")
 
 
 class ValidationTests(unittest.TestCase):
+    def test_expression_input_errors_identify_the_boundary_before_graph_is_called(self):
+        with patch.object(library.ExpressionFunction, "graph") as graph:
+            with self.assertRaisesRegex(CalculationError, "Use \\* for multiplication") as raised:
+                compute_curve("ExpressionFunction", {"expression": "2x + 1"})
+        self.assertEqual(raised.exception.source, "input")
+        graph.assert_not_called()
+
+    def test_normalized_expression_export_reproduces_the_upstream_constructor(self):
+        source = generate_code("ExpressionFunction", {"expression": "ln(x) + x^2"}, (0.1, 3), 31)
+        with patch.object(library.ExpressionFunction, "graph", autospec=True) as graph:
+            namespace = {}
+            exec(compile(source, "normalized_expression.py", "exec"), namespace)
+        self.assertEqual(namespace["expression"], "log(x) + x**2")
+        graph.assert_called_once_with(namespace["f"])
+        self.assertEqual(namespace["f"].expression, namespace["expression"])
+
     def test_bad_inputs_are_rejected_before_library_execution(self):
         cases = [
             ("Linear", {"m": float("nan")}, None, None),
@@ -132,6 +196,7 @@ class ValidationTests(unittest.TestCase):
             "__import__('os')", "x.__class__", "(1).__class__.__mro__",
             "[x for x in (1,2)]", "sin.__globals__", "sin(x)[0]",
             "'string'", "True", "unknown(x)", "lambda: 1", "[1]*10000000",
+            "1&2", "1<<2", "1//2",
             "2**1000000000", "2**(2**20)", "power(2, 1000000000)",
             "(((9**32)**32)**32)", "(10**12)**32", "(10**12)*(10**12)",
             "9" * 500,

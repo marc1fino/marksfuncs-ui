@@ -11,6 +11,7 @@ import keyword
 import math
 import operator
 import re
+import sys
 import warnings as python_warnings
 from unittest.mock import patch
 
@@ -26,7 +27,11 @@ from .catalog import BY_KEY, FunctionSpec
 
 
 class CalculationError(ValueError):
-    """A validation error or an unchanged failure from the installed library."""
+    """Identify whether input validation or the installed library failed."""
+
+    def __init__(self, message, *, source="input"):
+        super().__init__(message)
+        self.source = source
 
 
 @dataclass(frozen=True)
@@ -78,32 +83,37 @@ _AST_NODES = (
 
 
 def validate_expression(expression: str) -> str:
-    """Restrict upstream eval to small numeric expressions with no object access."""
+    """Normalize math notation and validate input before marksfuncs evaluates it.
+
+    This only translates notation: evaluation and sampling still happen inside
+    the installed ExpressionFunction.graph(), never in this adapter.
+    """
     if not isinstance(expression, str) or not expression.strip() or len(expression) > 1000:
-        raise CalculationError("Escribe una expresión matemática de 1 a 1000 caracteres.")
+        raise CalculationError("Enter a mathematical expression of 1 to 1000 characters.")
+    expression = re.sub(r"\bln(?=\s*\()", "log", expression.strip().replace("^", "**"))
     try:
         tree = ast.parse(expression, mode="eval")
     except (SyntaxError, RecursionError) as error:
-        raise CalculationError("Expresión no válida. Usa ** para potencias, por ejemplo x**2.") from error
+        raise CalculationError("Invalid expression. Use * for multiplication and ** or ^ for powers, for example 2*x + x**2.") from error
     nodes = list(ast.walk(tree))
     if len(nodes) > 160:
-        raise CalculationError("La expresión es demasiado compleja; simplifica sus operaciones.")
+        raise CalculationError("The expression is too complex. Simplify its operations.")
+    if any(not isinstance(node, _AST_NODES) for node in nodes):
+        raise CalculationError("Only numbers, x, constants and mathematical functions are allowed.")
     for node in nodes:
-        if not isinstance(node, _AST_NODES):
-            raise CalculationError("Solo se admiten números, x, constantes y funciones matemáticas.")
         if isinstance(node, ast.Constant):
             if type(node.value) not in (int, float) or abs(node.value) > 1e12 or not math.isfinite(float(node.value)):
-                raise CalculationError("Las constantes deben ser números finitos de magnitud ≤ 10¹².")
+                raise CalculationError("Constants must be finite numbers with magnitude ≤ 10¹².")
         if isinstance(node, ast.Name) and node.id not in _FUNCTIONS | _CONSTANTS:
-            raise CalculationError(f"Nombre no permitido: {node.id}.")
+            raise CalculationError(f"Unknown name: {node.id}. Use x, pi, e or a supported mathematical function.")
         if isinstance(node, ast.Call):
             if not isinstance(node.func, ast.Name) or node.func.id not in _FUNCTIONS or node.keywords or not 1 <= len(node.args) <= 3:
-                raise CalculationError("Utiliza una función matemática conocida con uno a tres argumentos.")
+                raise CalculationError("Use a supported mathematical function with one to three arguments.")
             if node.func.id == "power" and len(node.args) == 2:
                 _validate_exponent(node.args[1])
             if node.func.id in {"jn", "yn"}:
                 if not isinstance(node.args[0], ast.Constant) or abs(node.args[0].value) > 32:
-                    raise CalculationError("El orden de Bessel debe ser una constante entre −32 y 32.")
+                    raise CalculationError("The Bessel order must be a constant between −32 and 32.")
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
             _validate_exponent(node.right)
         if isinstance(node, ast.BinOp):
@@ -125,7 +135,7 @@ def _bounded_scalar(node):
     """
     if isinstance(node, ast.Constant) and type(node.value) in (int, float):
         if abs(node.value) > 1e12:
-            raise CalculationError("Las constantes deben tener magnitud ≤ 10¹².")
+            raise CalculationError("Constants must have magnitude ≤ 10¹².")
         return float(node.value)
     if isinstance(node, ast.UnaryOp):
         value = _bounded_scalar(node.operand)
@@ -138,9 +148,9 @@ def _bounded_scalar(node):
     try:
         result = _SCALAR_OPERATORS[type(node.op)](left, right)
     except (ArithmeticError, ValueError) as error:
-        raise CalculationError("Hay una operación constante indefinida o demasiado grande.") from error
+        raise CalculationError("A constant operation is undefined or too large.") from error
     if not math.isfinite(result) or abs(result) > 1e12:
-        raise CalculationError("Cada operación constante debe producir un valor finito de magnitud ≤ 10¹².")
+        raise CalculationError("Every constant operation must produce a finite value with magnitude ≤ 10¹².")
     return result
 
 
@@ -152,25 +162,25 @@ def _validate_exponent(node):
     if isinstance(literal, ast.UnaryOp) and isinstance(literal.op, (ast.USub, ast.UAdd)):
         literal = literal.operand
     if not isinstance(literal, ast.Constant) or type(literal.value) not in (int, float) or abs(literal.value) > 32:
-        raise CalculationError("Usa exponentes constantes entre −32 y 32, o una expresión que dependa de x.")
+        raise CalculationError("Use constant exponents between −32 and 32, or an expression that depends on x.")
 
 
 def _coefficients(value):
     if isinstance(value, str):
         if len(value) > 2000:
-            raise CalculationError("La lista de coeficientes es demasiado larga.")
+            raise CalculationError("The coefficient list is too long.")
         try:
             value = ast.literal_eval(value)
         except (ValueError, SyntaxError, RecursionError) as error:
-            raise CalculationError("Usa una lista [1, 2, 3] o un diccionario {0: 1, 2: 3}.") from error
+            raise CalculationError("Use a list [1, 2, 3] or a dictionary {0: 1, 2: 3}.") from error
     if not isinstance(value, (list, dict)) or not value or len(value) > 21:
-        raise CalculationError("Introduce entre 1 y 21 coeficientes.")
+        raise CalculationError("Enter between 1 and 21 coefficients.")
     items = enumerate(value) if isinstance(value, list) else value.items()
     for degree, coefficient in items:
         if type(degree) is not int or not 0 <= degree <= 20:
-            raise CalculationError("Los grados deben ser enteros de 0 a 20.")
+            raise CalculationError("Degrees must be integers from 0 to 20.")
         if type(coefficient) not in (int, float) or abs(coefficient) > 1e9 or not math.isfinite(coefficient):
-            raise CalculationError("Cada coeficiente debe ser finito y de magnitud ≤ 10⁹.")
+            raise CalculationError("Each coefficient must be finite with magnitude ≤ 10⁹.")
     return value
 
 
@@ -178,7 +188,7 @@ def resolve_spec(spec_or_key: FunctionSpec | str) -> FunctionSpec:
     try:
         return BY_KEY[spec_or_key] if isinstance(spec_or_key, str) else BY_KEY[spec_or_key.key]
     except KeyError as error:
-        raise CalculationError("Esta función no está en el catálogo.") from error
+        raise CalculationError("This function is not in the catalog.") from error
 
 
 def constructor_arguments(spec_or_key, parameters=None, x_range=None, points=None):
@@ -187,7 +197,7 @@ def constructor_arguments(spec_or_key, parameters=None, x_range=None, points=Non
     values = spec.defaults()
     if parameters:
         if set(parameters) - set(values):
-            raise CalculationError("Se han recibido parámetros desconocidos.")
+            raise CalculationError("Unknown parameters were supplied.")
         values.update(parameters)
     for parameter in spec.parameters:
         value = values[parameter.key]
@@ -198,31 +208,31 @@ def constructor_arguments(spec_or_key, parameters=None, x_range=None, points=Non
                 values[parameter.key] = validate_expression(value)
             else:
                 if not isinstance(value, str) or not value.strip() or len(value) > 300 or not re.fullmatch(r"[\s+\-0-9x^]+", value):
-                    raise CalculationError("Usa términos enteros como 2x^3 - x + 1.")
+                    raise CalculationError("Use integer terms such as 2x^3 - x + 1.")
                 degrees = re.findall(r"\^(\d+)", value)
                 if any(int(degree) > 20 for degree in degrees):
-                    raise CalculationError("El grado máximo permitido es 20.")
+                    raise CalculationError("The maximum allowed degree is 20.")
         else:
             if type(value) not in (int, float):
-                raise CalculationError(f"{parameter.label} debe ser un número finito.")
+                raise CalculationError(f"{parameter.label} must be a finite number.")
             if not parameter.minimum <= value <= parameter.maximum or not math.isfinite(value):
-                raise CalculationError(f"{parameter.label}: usa un valor entre {parameter.minimum:g} y {parameter.maximum:g}.")
+                raise CalculationError(f"{parameter.label}: use a value between {parameter.minimum:g} and {parameter.maximum:g}.")
             if parameter.integer:
                 if int(value) != value:
-                    raise CalculationError(f"{parameter.label} debe ser entero.")
+                    raise CalculationError(f"{parameter.label} must be an integer.")
                 values[parameter.key] = int(value)
     bounds = spec.x_range if x_range is None else x_range
     if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
-        raise CalculationError("El intervalo debe contener inicio y final.")
+        raise CalculationError("The interval must contain a start and an end.")
     if any(type(value) not in (int, float) or abs(value) > 1e6 or not math.isfinite(value) for value in bounds) or bounds[0] >= bounds[1]:
-        raise CalculationError("El inicio debe ser menor que el final; los límites deben ser finitos y de magnitud ≤ 10⁶.")
+        raise CalculationError("The start must be less than the end. Bounds must be finite with magnitude ≤ 10⁶.")
     count = spec.points if points is None else points
     if type(count) not in (int, float) or not 2 <= count <= 4000 or not math.isfinite(count) or int(count) != count:
-        raise CalculationError("El número de muestras debe ser un entero de 2 a 4000.")
+        raise CalculationError("The sample count must be an integer from 2 to 4000.")
     if spec.key == "TopHat" and values["a"] >= values["b"]:
-        raise CalculationError("El inicio del pulso debe ser menor que su final.")
+        raise CalculationError("The pulse start must be less than its end.")
     if spec.key == "ModifiedAckermann" and not (0 <= bounds[0] < bounds[1] <= 20):
-        raise CalculationError("Ackermann modificada requiere un intervalo x entre 0 y 20 para limitar su crecimiento.")
+        raise CalculationError("Modified Ackermann requires an x interval between 0 and 20 to limit its growth.")
     values["x_values_list"] = [bounds[0], bounds[1], int(count)]
     return values
 
@@ -231,9 +241,13 @@ def _library_class(key):
     import marksfuncs.functions as library
     candidate = getattr(library, key, None)
     if not inspect.isclass(candidate):
-        raise CalculationError(f"La instalación de marksfuncs no incluye {key}. Actualiza marksfuncs y reinicia la aplicación.")
+        raise CalculationError(
+            f"The installed marksfuncs does not include {key}. "
+            f'Update this interpreter with "{sys.executable}" -m pip install --upgrade marksfuncs, then restart the app.',
+            source="marksfuncs",
+        )
     if not callable(getattr(candidate, "graph", None)):
-        raise CalculationError(f"marksfuncs declara {key}, pero esta versión no implementa graph(). La explicación está disponible; el cálculo necesita una implementación en la librería.")
+        raise CalculationError(f"marksfuncs declares {key}, but this version does not implement graph(). The explanation is available; plotting requires an implementation in the library.", source="marksfuncs")
     return candidate
 
 
@@ -247,7 +261,11 @@ def unavailable_reason(spec_or_key):
 
 
 def compute_curve(spec_or_key, parameters=None, x_range=None, points=None):
-    """Run the original graph() and copy its Matplotlib artists into plain arrays."""
+    """Run marksfuncs.graph() and copy its unchanged Matplotlib plot data.
+
+    The class is resolved from marksfuncs.functions and receives the validated
+    constructor arguments. Qt only displays the arrays produced by graph().
+    """
     spec = resolve_spec(spec_or_key)
     arguments = constructor_arguments(spec, parameters, x_range, points)
     library_class = _library_class(spec.key)
@@ -266,7 +284,9 @@ def compute_curve(spec_or_key, parameters=None, x_range=None, points=None):
         with python_warnings.catch_warnings(record=True) as caught:
             python_warnings.simplefilter("always", RuntimeWarning)
             with patch.object(plt, "figure", new_figure), patch.object(plt, "show"):
-                library_class(**arguments).graph()
+                # All function evaluation, sampling and plotting belong to marksfuncs.
+                library_function = library_class(**arguments)
+                library_function.graph()
             for figure in captured_figures:
                 # A colorbar creates its own axes; the first axes is the actual plot.
                 for axes in figure.axes[:1]:
@@ -287,16 +307,16 @@ def compute_curve(spec_or_key, parameters=None, x_range=None, points=None):
                             series.append(SeriesData(offsets[:, 0].copy(), offsets[:, 1].copy(), spec.name, True,
                                                      None if colors is None else np.asarray(colors).copy()))
             if caught:
-                messages.append("La librería ha encontrado valores fuera de dominio o desbordamientos; se conservan como huecos en la gráfica.")
+                messages.append("marksfuncs reported domain or overflow warnings. Invalid samples remain gaps in the plot.")
     except Exception as error:
-        raise CalculationError(f"marksfuncs.{spec.key}: {error}") from error
+        raise CalculationError(f"marksfuncs.{spec.key}: {error}", source="marksfuncs") from error
     finally:
         for figure in captured_figures:
             plt.close(figure)
     if not series or not any(np.any(np.isfinite(item.x) & np.isfinite(item.y)) for item in series):
-        raise CalculationError("marksfuncs no ha producido valores finitos. Revisa el dominio, los parámetros y la expresión.")
+        raise CalculationError("marksfuncs returned no finite real samples. Check the domain, parameters or expression.", source="marksfuncs")
     if any(np.any(~np.isfinite(item.y)) for item in series) and not messages:
-        messages.append("Hay muestras fuera de dominio; se muestran como huecos.")
+        messages.append("Some samples are outside the real domain and appear as gaps.")
     return CurveData(tuple(series), spec.key, tuple(messages))
 
 
@@ -306,7 +326,7 @@ def generate_code(spec_or_key, parameters=None, x_range=None, points=None, varia
     _library_class(spec.key)
     arguments = constructor_arguments(spec, parameters, x_range, points)
     if not isinstance(variable_name, str) or not variable_name.isidentifier() or keyword.iskeyword(variable_name) or variable_name in set(arguments) | {spec.key}:
-        raise CalculationError("El nombre de la función debe ser un identificador Python distinto de sus parámetros.")
+        raise CalculationError("The function name must be a Python identifier distinct from its parameters.")
     assignments = "\n".join(f"{key} = {value!r}" for key, value in arguments.items())
     references = ",\n".join(f"    {key}={key}" for key in arguments)
     return (f"from marksfuncs.functions import {spec.key}\n\n"
