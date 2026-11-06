@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marksfuncs-ui"
+version = "0.1.0"
+description = "An animated visual laboratory for the marksfuncs Python library"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Marc"}]
+dependencies = [
+  "marksfuncs>=1.1,<2",
+  "PyQt6>=6.6,<7",
+  "numpy>=1.26,<3",
+  "matplotlib>=3.8,<4",
+  "scipy>=1.11,<2",
+  "Pillow>=10,<13",
+]
+
+[project.scripts]
+marksfuncs-ui = "marksfuncs_ui.__main__:main"
+mfui = "marksfuncs_ui.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/marc1fino/marksfuncs-ui"
+Library = "https://github.com/marc1fino/marksfuncs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+marksfuncs_ui = ["assets/*.svg", "assets/fonts/*.ttf", "assets/fonts/*OFL.txt"]
