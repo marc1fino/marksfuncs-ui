@@ -203,7 +203,7 @@ CATALOG = (
     spec("Ackermann", "Ackermann", "Sucesiones", "A(0,n)=n+1; A(m,n)=A(m−1,A(m,n−1))",
          "Una función recursiva de crecimiento muy rápido. marksfuncs representa una matriz de pares (m, n), coloreada con sus valores.",
          "m entero de 0 a 3 y n entero de 0 a 3 en esta UI.", (p("m", "Orden máximo m", 2, 0, 3, integer=True), p("n", "Índice máximo n", 3, 0, 3, integer=True)), (0, 3),
-         note="Los ejes representan m y n; el color de cada punto contiene A(m,n). El intervalo x no interviene."),
+         note="Los ejes representan m y n; el intervalo x no interviene. marksfuncs aplana los colores en un orden distinto al de su malla, por lo que su asociación con cada par puede ser incorrecta. Se conservan los puntos y colores originales de la librería."),
     spec("ModifiedAckermann", "Ackermann modificada", "Sucesiones", "f(x) = A_mod(m, int(x))",
          "Utiliza expresiones cerradas para órdenes de cero a tres. La librería convierte cada x al entero más próximo hacia cero.",
          "m entero de 0 a 3 y 0 ≤ x ≤ 20 en esta UI.", (p("m", "Orden m", 2, 0, 3, integer=True), p("n", "n (no usado por graph)", 3, 0, 20, integer=True)), (0, 10),
