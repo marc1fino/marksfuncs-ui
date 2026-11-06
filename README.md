@@ -2,7 +2,9 @@
 
 A desktop interface for the [marksfuncs](https://github.com/marc1fino/marksfuncs) Python library.
 
-![marksfuncs-ui](docs/workspace.png)
+![marksfuncs-ui — blue interface with curve comparison](docs/workspace-blue.png)
+
+[Compact layout](docs/compact-blue.png)
 
 ## Run
 
@@ -39,6 +41,8 @@ The Python tab shows the same constructor arguments. Python and CSV exports cont
 ## Expressions and library limitations
 
 Use expressions such as `6x`, `2(x+1)`, `sin(x) + 0.2*x**2` or `sqrt(x)`. Implicit multiplication is converted to `*` before calling marksfuncs; the Python tab shows the converted expression. Powers accept `**` or `^`; `ln(x)` is an alias for `log(x)`. Expressions are checked before being passed to marksfuncs; imports, object access and arbitrary code are rejected.
+
+![Expression input with 6x plotted by marksfuncs](docs/expression-blue.png)
 
 marksfuncs 1.1 provides 54 working `graph()` methods. Its two Fresnel classes have no drawing methods, so their descriptions remain available while plotting is disabled. Other upstream quirks are documented in the function descriptions: the classic polynomial parser can add unexpected constants, Ackermann colors can be paired with the wrong coordinates, and Planck uses a reduced model. The interface preserves these library results.
 
