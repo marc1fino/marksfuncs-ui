@@ -60,8 +60,8 @@ class PlotTests(unittest.TestCase):
 
     def test_multi_curve_and_nonfinite_data_render_to_image(self):
         self.widget.set_curves([
-            {"x": [-1, 0, 1], "y": [1, math.nan, 2], "label": "primera"},
-            {"x": [-1, 0, 1], "y": [2, 3, 2], "label": "segunda", "scatter": True},
+            {"x": [-1, 0, 1], "y": [1, math.nan, 2], "label": "first"},
+            {"x": [-1, 0, 1], "y": [2, 3, 2], "label": "second", "scatter": True},
         ])
         image = self.widget.grab().toImage()
         self.assertFalse(image.isNull())

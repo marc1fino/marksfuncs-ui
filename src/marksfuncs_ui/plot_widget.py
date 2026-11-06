@@ -11,6 +11,7 @@ from PyQt6.QtCore import (
     QPropertyAnimation,
     QRectF,
     Qt,
+    QVariantAnimation,
     pyqtProperty,
     pyqtSignal,
 )
@@ -18,8 +19,8 @@ from PyQt6.QtGui import QColor, QFont, QLinearGradient, QMouseEvent, QPainter, Q
 from PyQt6.QtWidgets import QWidget
 
 
-PALETTE = ("#087f8c", "#ce8240", "#8b6ac2", "#cc6876", "#537fb4", "#6e9357")
-VALUE_PALETTE = ("#440154", "#3b528b", "#21918c", "#5ec962", "#fde725")
+PALETTE = ("#2028ff", "#b08a38", "#9066c4", "#cd6c90", "#4094dc", "#7278cb")
+VALUE_PALETTE = ("#151b84", "#343dce", "#647bff", "#9ba6ff", "#d7ddff")
 
 
 def _tick_step(span: float, target: int) -> float:
@@ -54,10 +55,11 @@ class PlotWidget(QWidget):
         self.setMinimumSize(240, 220)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setAccessibleName("Gráfica interactiva de funciones")
+        self.setAccessibleName("Interactive function plot")
         self.setAccessibleDescription(
-            "Arrastra para desplazar, usa la rueda para ampliar y doble clic para restablecer."
+            "Drag to pan, scroll to zoom, double-click to reset."
         )
+        self.setToolTip("Drag to pan · Scroll to zoom · Double-click to reset")
         self._curves: list[dict] = []
         self._path_cache: list[QPainterPath | None] | None = None
         self._value_bounds: tuple[float, float] | None = None
@@ -70,8 +72,14 @@ class PlotWidget(QWidget):
         self._reveal = 1.0
         self._animations_enabled = True
         self._animation = QPropertyAnimation(self, b"reveal", self)
-        self._animation.setDuration(380)
-        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.setDuration(420)
+        self._animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._camera_transition = QVariantAnimation(self)
+        self._camera_transition.setDuration(280)
+        self._camera_transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._camera_start = self._view
+        self._camera_end = self._view
+        self._camera_transition.valueChanged.connect(self._step_camera)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
     @property
@@ -91,11 +99,17 @@ class PlotWidget(QWidget):
         self._animations_enabled = bool(enabled)
         if not enabled:
             self.finish_animation()
+            if self._camera_transition.state() == QVariantAnimation.State.Running:
+                self._camera_transition.stop()
+                self._change_view(self._camera_end)
 
     def finish_animation(self) -> None:
-        """Reveal all samples before saving a static image."""
+        """Finish curve and camera transitions before saving a static image."""
         self._animation.stop()
         self._set_reveal(1.0)
+        if self._camera_transition.state() == QVariantAnimation.State.Running:
+            self._camera_transition.stop()
+            self._change_view(self._camera_end)
 
     def set_curves(self, curves: list[dict]) -> None:
         prepared = []
@@ -103,12 +117,12 @@ class PlotWidget(QWidget):
             x = np.asarray(curve["x"], dtype=float).reshape(-1).copy()
             y = np.asarray(curve["y"], dtype=float).reshape(-1).copy()
             if x.shape != y.shape:
-                raise ValueError("Las coordenadas x e y deben tener la misma longitud.")
+                raise ValueError("x and y coordinates must have the same length.")
             values = curve.get("values")
             if values is not None:
                 values = np.asarray(values, dtype=float).reshape(-1).copy()
                 if values.shape != x.shape:
-                    raise ValueError("Cada punto debe tener un valor de color.")
+                    raise ValueError("Each point must have a color value.")
             prepared.append({
                 "x": x,
                 "y": y,
@@ -139,12 +153,26 @@ class PlotWidget(QWidget):
     def set_view(self, xmin: float, xmax: float, ymin: float, ymax: float) -> None:
         bounds = tuple(float(value) for value in (xmin, xmax, ymin, ymax))
         if not all(math.isfinite(value) for value in bounds):
-            raise ValueError("Los límites deben ser números finitos.")
+            raise ValueError("View bounds must be finite numbers.")
         spans = (bounds[1] - bounds[0], bounds[3] - bounds[2])
         if not all(math.isfinite(span) and span > 0 for span in spans):
-            raise ValueError("El límite superior debe ser mayor que el inferior.")
+            raise ValueError("Upper bounds must be greater than lower bounds.")
         self._default_view = bounds
-        self._change_view(bounds)
+        self._animate_view(bounds)
+
+    def _step_camera(self, progress):
+        self._change_view(tuple(start * (1 - progress) + end * progress
+                                for start, end in zip(self._camera_start, self._camera_end)))
+
+    def _animate_view(self, bounds):
+        self._camera_transition.stop()
+        if not self._animations_enabled or not self.isVisible() or bounds == self._view:
+            self._change_view(bounds)
+            return
+        self._camera_start, self._camera_end = self._view, bounds
+        self._camera_transition.setStartValue(0.0)
+        self._camera_transition.setEndValue(1.0)
+        self._camera_transition.start()
 
     def _change_view(self, bounds: tuple) -> None:
         if not all(math.isfinite(value) for value in bounds):
@@ -157,7 +185,7 @@ class PlotWidget(QWidget):
         self.update()
 
     def reset_view(self) -> None:
-        self._change_view(self._default_view)
+        self._animate_view(self._default_view)
 
     def set_axis_labels(self, horizontal: str, vertical: str) -> None:
         self._axis_labels = (str(horizontal), str(vertical))
@@ -186,7 +214,7 @@ class PlotWidget(QWidget):
 
     def _value_color(self, value: float) -> QColor:
         if self._value_bounds is None or not math.isfinite(value):
-            return QColor("#89978f")
+            return QColor("#959bb5")
         low, high = self._value_bounds
         fraction = (value - low) / (high - low) if high > low else 0.5
         position = min(1.0, max(0.0, fraction)) * (len(VALUE_PALETTE) - 1)
@@ -216,35 +244,37 @@ class PlotWidget(QWidget):
 
     def _curve_path(self, curve: dict) -> QPainterPath:
         path = QPainterPath()
+        x, y = curve["x"], curve["y"]
+        if not len(x):
+            return path
+        rect = self._plot_rect()
         xmin, xmax, ymin, ymax = self._view
         xspan, yspan = xmax - xmin, ymax - ymin
-        previous: tuple[float, float] | None = None
-        for x, y in zip(curve["x"], curve["y"]):
-            if not math.isfinite(x) or not math.isfinite(y):
-                previous = None
-                continue
-            # Keep coordinates within a safe rasterization range. This affects
-            # off-canvas pixels only and never changes the library samples.
-            point = self._to_screen(
-                min(max(float(x), xmin - xspan), xmax + xspan),
-                min(max(float(y), ymin - yspan), ymax + yspan),
+        valid = np.isfinite(x) & np.isfinite(y)
+        breaks = np.ones(len(x), dtype=bool)
+        # Vectorize pixel mapping only. Every original sample is retained, and
+        # clipping affects off-canvas pixels without altering the library data.
+        with np.errstate(over="ignore", invalid="ignore"):
+            screen_x = rect.left() + (np.clip(x, xmin - xspan, xmax + xspan) - xmin) / xspan * rect.width()
+            screen_y = rect.bottom() - (np.clip(y, ymin - yspan, ymax + yspan) - ymin) / yspan * rect.height()
+            discontinuities = (
+                (np.abs(y[1:] - y[:-1]) > 2 * yspan)
+                & (np.minimum(y[1:], y[:-1]) < ymin)
+                & (np.maximum(y[1:], y[:-1]) > ymax)
             )
-            discontinuity = previous is not None and (
-                abs(y - previous[1]) > 2 * yspan
-                and min(y, previous[1]) < ymin
-                and max(y, previous[1]) > ymax
-            )
-            if previous is None or discontinuity:
+            breaks[1:] = ~valid[:-1] | discontinuities
+        for index in np.flatnonzero(valid):
+            point = QPointF(screen_x[index], screen_y[index])
+            if breaks[index]:
                 path.moveTo(point)
             else:
                 path.lineTo(point)
-            previous = (x, y)
         return path
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#fcfdfb"))
+        painter.fillRect(self.rect(), QColor("#fdfdff"))
         rect = self._plot_rect()
         self._paint_grid(painter, rect)
         if self._path_cache is None:
@@ -254,6 +284,9 @@ class PlotWidget(QWidget):
             ]
         painter.save()
         painter.setClipRect(QRectF(rect.left(), rect.top(), rect.width() * self._reveal, rect.height()))
+        painter.setOpacity(0.4 + 0.6 * self._reveal)
+        draw_glow = (self._camera_transition.state() != QVariantAnimation.State.Running
+                     and sum(len(curve["x"]) for curve in self._curves) <= 8000)
         for index, curve in enumerate(self._curves):
             color = QColor(curve["color"])
             painter.setPen(QPen(color, 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
@@ -268,19 +301,24 @@ class PlotWidget(QWidget):
                         painter.drawEllipse(self._to_screen(x, y), 6 if colored else 3.5, 6 if colored else 3.5)
             else:
                 path = self._path_cache[index]
-                glow = QColor(color)
-                glow.setAlpha(15)
-                painter.setPen(QPen(glow, 8))
-                painter.drawPath(path)
+                if draw_glow:
+                    glow = QColor(color)
+                    glow.setAlpha(22)
+                    painter.setPen(QPen(glow, 8))
+                    painter.drawPath(path)
                 painter.setPen(QPen(color, 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
                 painter.drawPath(path)
         painter.restore()
+        if 0 < self._reveal < 1:
+            edge = rect.left() + rect.width() * self._reveal
+            sweep = QLinearGradient(QPointF(edge - 32, 0), QPointF(edge + 8, 0))
+            sweep.setColorAt(0, QColor(75, 86, 255, 0))
+            sweep.setColorAt(0.8, QColor(75, 86, 255, 24))
+            sweep.setColorAt(1, QColor(75, 86, 255, 0))
+            painter.fillRect(QRectF(edge - 32, rect.top(), 40, rect.height()), sweep)
         self._paint_legend(painter, rect)
         if self._value_bounds is not None:
             self._paint_value_scale(painter, rect)
-        if not self._curves:
-            painter.setPen(QColor("#7e8c87"))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Tu próxima idea empieza con una función.")
         if self._hover is not None and rect.contains(self._hover) and self._drag_origin is None:
             self._paint_hover(painter, rect)
         painter.end()
@@ -305,7 +343,7 @@ class PlotWidget(QWidget):
                 value = tick_index * minor
                 major = tick_index % 5 == 0
                 zero = tick_index == 0
-                painter.setPen(QPen(QColor("#b9c9c4" if zero else "#e1e9e5" if major else "#f0f4f1"), 1))
+                painter.setPen(QPen(QColor("#c4c8e2" if zero else "#e7e9f4" if major else "#f3f4fa"), 1))
                 point = self._to_screen(value, 0) if axis == "x" else self._to_screen(0, value)
                 if axis == "x":
                     painter.drawLine(QPointF(point.x(), rect.top()), QPointF(point.x(), rect.bottom()))
@@ -316,9 +354,9 @@ class PlotWidget(QWidget):
                     label_rect = QRectF(0, point.y() - 10, rect.left() - 12, 20)
                     alignment = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 if major:
-                    painter.setPen(QColor("#82928b"))
+                    painter.setPen(QColor("#9297b3"))
                     painter.drawText(label_rect, alignment, _number(value))
-        painter.setPen(QColor("#60796e"))
+        painter.setPen(QColor("#7c829f"))
         painter.drawText(QRectF(rect.right() + 9, rect.bottom() - 23, 15, 20), Qt.AlignmentFlag.AlignCenter, self._axis_labels[0])
         painter.drawText(QRectF(rect.left() - 26, 2, 20, 20), Qt.AlignmentFlag.AlignCenter, self._axis_labels[1])
 
@@ -330,20 +368,20 @@ class PlotWidget(QWidget):
         curves = self._curves[-slots:]
         omitted = len(self._curves) - len(curves)
         if omitted:
-            curves = [{"label": f"+{omitted + 1} series", "color": "#83968b"}] + curves[1:]
+            curves = [{"label": f"+{omitted + 1} series", "color": "#9297b3"}] + curves[1:]
         cell_width = min(250, (rect.width() - 20) / columns)
         rows = math.ceil(len(curves) / columns)
         box = QRectF(rect.left() + 8, rect.top() + 7,
                      min(columns, len(curves)) * cell_width, rows * 24 + 8)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(252, 253, 251, 230))
+        painter.setBrush(QColor(253, 253, 255, 230))
         painter.drawRoundedRect(box, 4, 4)
         for index, curve in enumerate(curves):
             left = box.left() + (index % columns) * cell_width + 8
             top = box.top() + (index // columns) * 24 + 4
             painter.setPen(QPen(QColor(curve["color"]), 2.5))
             painter.drawLine(QPointF(left, top + 10), QPointF(left + 13, top + 10))
-            painter.setPen(QColor("#61786d"))
+            painter.setPen(QColor("#7c829f"))
             text = painter.fontMetrics().elidedText(curve["label"], Qt.TextElideMode.ElideRight, max(20, int(cell_width - 35)))
             painter.drawText(QRectF(left + 20, top, cell_width - 30, 20), Qt.AlignmentFlag.AlignVCenter, text)
 
@@ -351,7 +389,7 @@ class PlotWidget(QWidget):
         width = min(170, rect.width() - 24)
         box = QRectF(rect.right() - width - 10, rect.bottom() - 55, width, 47)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(252, 253, 251, 235))
+        painter.setBrush(QColor(253, 253, 255, 235))
         painter.drawRoundedRect(box, 4, 4)
         bar = QRectF(box.left() + 8, box.top() + 6, width - 16, 8)
         gradient = QLinearGradient(bar.topLeft(), bar.topRight())
@@ -359,8 +397,8 @@ class PlotWidget(QWidget):
             gradient.setColorAt(index / (len(VALUE_PALETTE) - 1), QColor(color))
         painter.fillRect(bar, gradient)
         low, high = self._value_bounds
-        painter.setPen(QColor("#61786d"))
-        text = f"Valor  {_number(low)} — {_number(high)}"
+        painter.setPen(QColor("#7c829f"))
+        text = f"Value  {_number(low)} — {_number(high)}"
         painter.drawText(QRectF(box.left() + 8, box.top() + 20, width - 16, 20), Qt.AlignmentFlag.AlignHCenter, text)
 
     def _paint_hover(self, painter: QPainter, rect: QRectF) -> None:
@@ -368,7 +406,7 @@ class PlotWidget(QWidget):
         x, y = self._to_data(point)
         painter.save()
         painter.setClipRect(rect)
-        painter.setPen(QPen(QColor("#9ab2a7"), 1, Qt.PenStyle.DashLine))
+        painter.setPen(QPen(QColor("#b2b8da"), 1, Qt.PenStyle.DashLine))
         painter.drawLine(QPointF(point.x(), rect.top()), QPointF(point.x(), rect.bottom()))
         painter.drawLine(QPointF(rect.left(), point.y()), QPointF(rect.right(), point.y()))
         for curve in self._curves:
@@ -403,19 +441,20 @@ class PlotWidget(QWidget):
                     nearest_distance = distances[nearest]
                     text = (f"{self._axis_labels[0]}  {_number(curve['x'][nearest])}    "
                             f"{self._axis_labels[1]}  {_number(curve['y'][nearest])}    "
-                            f"valor  {_number(curve['values'][nearest])}")
+                            f"value  {_number(curve['values'][nearest])}")
         width = painter.fontMetrics().horizontalAdvance(text) + 24
         left = max(rect.left(), min(point.x() + 15, rect.right() - width))
         top = max(rect.top(), min(point.y() - 40, rect.bottom() - 30))
         box = QRectF(left, top, width, 29)
-        painter.setPen(QPen(QColor("#dce6df"), 1))
+        painter.setPen(QPen(QColor("#e0e3f0"), 1))
         painter.setBrush(QColor("white"))
         painter.drawRoundedRect(box, 5, 5)
-        painter.setPen(QColor("#33554a"))
+        painter.setPen(QColor("#4d5485"))
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._plot_rect().contains(event.position()):
+            self._camera_transition.stop()
             self._drag_origin = event.position()
             self._drag_view = self._view
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -460,6 +499,7 @@ class PlotWidget(QWidget):
             event.ignore()
             return
         anchor_x, anchor_y = self._to_data(event.position())
+        self._camera_transition.stop()
         factor = 0.82 ** max(-5, min(5, delta / 120))
         xmin, xmax, ymin, ymax = self._view
         bounds = (
@@ -489,8 +529,7 @@ class PlotWidget(QWidget):
         super().leaveEvent(event)
 
     def hideEvent(self, event) -> None:
-        self._animation.stop()
-        self._set_reveal(1.0)
+        self.finish_animation()
         super().hideEvent(event)
 
     def keyPressEvent(self, event) -> None:
