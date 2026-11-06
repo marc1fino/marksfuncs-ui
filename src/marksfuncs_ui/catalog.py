@@ -1,4 +1,4 @@
-"""Educational metadata for the 56 classes implemented by marksfuncs 1.1.
+"""Educational metadata for the 56 classes implemented by marksfuncs 1.2.
 
 Formulas explain the upstream implementation; calculation belongs to marksfuncs.
 """
@@ -157,11 +157,9 @@ CATALOG = (
     spec("Airy", "Airy", "Special", "f(x) = Ai(x)",
          "Airy's solution oscillates for negative x and decays for positive x, with uses in optics and quantum mechanics."),
     spec("SineFresnel", "Fresnel sine", "Special", "f(x) = S(x)",
-         "Integrates sin(πt²/2) from zero to x; used in diffraction with increasing oscillation frequency.",
-         note="marksfuncs 1.1 declares this class without graph() or image(). Plotting requires a library version that implements them."),
+         "Integrates sin(πt²/2) from zero to x; used in diffraction with increasing oscillation frequency."),
     spec("CosineFresnel", "Fresnel cosine", "Special", "f(x) = C(x)",
-         "Integrates cos(πt²/2) from zero to x. Together with S(x), it forms the Cornu spiral.",
-         note="marksfuncs 1.1 declares this class without graph() or image(). Plotting requires a library version that implements them."),
+         "Integrates cos(πt²/2) from zero to x. Together with S(x), it forms the Cornu spiral."),
     spec("LogGamma", "Log Gamma", "Special", "f(x) = ln|Γ(x)|",
          "The logarithm of Gamma's magnitude avoids large values and extends the factorial relationship.",
          "Avoid nonpositive integers, where Gamma has poles.", x_range=(0.1, 6)),

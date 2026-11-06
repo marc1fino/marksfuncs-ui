@@ -7,6 +7,7 @@ from unittest.mock import patch
 import matplotlib.pyplot as plt
 import marksfuncs.functions as library
 import numpy as np
+from scipy.special import fresnel
 
 from marksfuncs_ui.catalog import BY_KEY, CATALOG
 from marksfuncs_ui.engine import (
@@ -27,16 +28,33 @@ class LibraryIntegrationTests(unittest.TestCase):
     def test_every_available_default_runs_real_library(self):
         for spec in CATALOG:
             with self.subTest(function=spec.key):
-                if unavailable_reason(spec):
-                    self.assertIn(spec.key, {"SineFresnel", "CosineFresnel"})
-                    with self.assertRaisesRegex(CalculationError, "does not implement graph"):
-                        compute_curve(spec)
-                    continue
+                self.assertEqual(unavailable_reason(spec), "")
                 result = compute_curve(spec)
                 self.assertEqual(result.class_name, spec.key)
                 for series in result.series:
                     self.assertEqual(series.x.shape, series.y.shape)
                     self.assertTrue(np.any(np.isfinite(series.x) & np.isfinite(series.y)))
+
+    def test_fresnel_graphs_use_the_original_library_and_correct_components(self):
+        for key, component in (("SineFresnel", 0), ("CosineFresnel", 1)):
+            with self.subTest(function=key):
+                cls = getattr(library, key)
+                self.assertTrue(callable(getattr(cls, "graph", None)))
+                original_graph = cls.graph
+                with patch.object(cls, "graph", autospec=True, side_effect=original_graph) as graph:
+                    curve = compute_curve(key, x_range=(-3, 3), points=121)
+                graph.assert_called_once()
+                self.assertEqual(graph.call_args.args[0].x_values_list, [-3, 3, 121])
+                self.assertFalse(curve.warnings)
+                np.testing.assert_array_equal(curve.x, np.linspace(-3, 3, 121))
+                np.testing.assert_allclose(curve.y, fresnel(curve.x)[component], rtol=1e-13, atol=1e-15)
+
+    def test_missing_library_graph_still_reports_an_upstream_error(self):
+        with patch.object(library.SineFresnel, "graph", None):
+            self.assertIn("does not implement graph", unavailable_reason("SineFresnel"))
+            with self.assertRaisesRegex(CalculationError, "does not implement graph") as raised:
+                compute_curve("SineFresnel")
+            self.assertEqual(raised.exception.source, "marksfuncs")
 
     def test_data_is_copied_from_library_graph_not_recalculated(self):
         def unusual_graph(instance):

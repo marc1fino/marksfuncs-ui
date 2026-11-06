@@ -44,7 +44,7 @@ Use expressions such as `6x`, `2(x+1)`, `sin(x) + 0.2*x**2` or `sqrt(x)`. Implic
 
 ![Expression input with 6x plotted by marksfuncs](docs/expression-blue.png)
 
-marksfuncs 1.1 provides 54 working `graph()` methods. Its two Fresnel classes have no drawing methods, so their descriptions remain available while plotting is disabled. Other upstream quirks are documented in the function descriptions: the classic polynomial parser can add unexpected constants, Ackermann colors can be paired with the wrong coordinates, and Planck uses a reduced model. The interface preserves these library results.
+marksfuncs 1.2 or later is required. All 56 catalog functions can be plotted, including `SineFresnel` and `CosineFresnel`. Upstream quirks are documented in the function descriptions: the classic polynomial parser can add unexpected constants, Ackermann colors can be paired with the wrong coordinates, and Planck uses a reduced model. The interface preserves these library results.
 
 Existing version 1 `.mfuncs` files keep the same format and parameter keys. Session files are validated before loading and saved atomically.
 

@@ -129,6 +129,43 @@ class MainWindowTests(unittest.TestCase):
                     self.assertTrue(self.window.details.table.rowCount())
                     self.assertIn(f"from marksfuncs.functions import {spec.key}", self.window.details.code.toPlainText())
 
+    def test_fresnel_session_restore_plot_comparison_and_exports(self):
+        historical = {
+            "version": 1, "selected": "SineFresnel",
+            "functions": {"SineFresnel": {"parameters": {}, "x_range": [-2.5, 4.25], "points": 517}},
+            "comparisons": [],
+        }
+        path = self.path("existing-fresnel.mfuncs")
+        path.write_text(json.dumps(historical), encoding="utf-8")
+        with patch("marksfuncs_ui.main_window.QFileDialog.getOpenFileName", return_value=(str(path), "")), patch(
+            "marksfuncs_ui.main_window.QMessageBox.warning"
+        ) as warning:
+            self.window.open_project()
+        warning.assert_not_called()
+        self.assertEqual(self.window.project_state(), historical)
+
+        for key in ("SineFresnel", "CosineFresnel"):
+            with self.subTest(function=key):
+                self.window.select_function(key)
+                self.assertTrue(self.window.calculate_button.isEnabled())
+                self.assertTrue(self.window.pin_button.isEnabled())
+                self.assertFalse(self.window.error_label.isVisible())
+                self.assertIsNotNone(self.window.current_curve)
+                self.assertEqual(self.window.details.table.rowCount(), 400)
+                source = self.export("py", key + ".py").read_text(encoding="utf-8")
+                self.assertIn(f"from marksfuncs.functions import {key}", source)
+                self.assertIn("f.graph()", source)
+                data_path = self.export("csv", key + ".csv")
+                with data_path.open(encoding="utf-8", newline="") as stream:
+                    rows = list(csv.reader(stream))
+                samples = np.asarray(rows[1:], dtype=float)
+                np.testing.assert_array_equal(samples[:, 0], self.window.current_curve.x)
+                np.testing.assert_array_equal(samples[:, 1], self.window.current_curve.y)
+                image = QImage(str(self.export("png", key + ".png")))
+                self.assertFalse(image.isNull())
+                self.window.pin_curve()
+        self.assertEqual([item["key"] for item in self.window.comparisons], ["SineFresnel", "CosineFresnel"])
+
     def test_minimal_brand_and_blue_plot_replace_decorative_copy(self):
         self.assertEqual(self.window.windowTitle(), "marksfuncs-ui")
         brand = self.window.findChild(QLabel, "Brand")
