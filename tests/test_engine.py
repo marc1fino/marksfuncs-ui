@@ -102,6 +102,31 @@ class LibraryIntegrationTests(unittest.TestCase):
         self.assertEqual(called.call_args.args[0].expression, BY_KEY["ExpressionFunction"].defaults()["expression"])
         self.assertEqual(np.isfinite(result.y).sum(), len(result.x))
 
+    def test_implicit_products_use_the_same_real_library_expression(self):
+        cases = (
+            ("6x", "6*x"), ("6 x", "6 *x"), ("2(x+1)", "2*(x+1)"),
+            ("(x+1)(x-1)", "(x+1)*(x-1)"), ("x(x+1)", "x*(x+1)"),
+            ("2sin(x)", "2*sin(x)"), ("sin(x)cos(x)", "sin(x)*cos(x)"),
+            ("pi x", "pi *x"), ("2pi", "2*pi"), ("3e-2x", "3e-2*x"),
+        )
+        original_graph = library.ExpressionFunction.graph
+        for raw, expected in cases:
+            with self.subTest(expression=raw):
+                received = []
+
+                def record_graph(instance):
+                    received.append(instance.expression)
+                    original_graph(instance)
+
+                with patch.object(library.ExpressionFunction, "graph", record_graph):
+                    result = compute_curve("ExpressionFunction", {"expression": raw})
+                direct = compute_curve("ExpressionFunction", {"expression": expected})
+                self.assertEqual(received, [expected])
+                np.testing.assert_array_equal(result.x, direct.x)
+                np.testing.assert_array_equal(result.y, direct.y)
+                source = generate_code("ExpressionFunction", {"expression": raw})
+                self.assertIn(f"expression = {expected!r}", source)
+
     def test_figures_are_cleaned_and_existing_figures_preserved(self):
         figure = plt.figure("Existing external figure")
         try:
@@ -145,10 +170,15 @@ class LibraryIntegrationTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_implicit_products_preserve_scientific_numbers_and_function_names(self):
+        for expression in ("1e-3*x", "log10(x)", "arctan2(x,1)", "maximum(x,0)", "sin(x) + x**2"):
+            with self.subTest(expression=expression):
+                self.assertEqual(validate_expression(expression), expression)
+
     def test_expression_input_errors_identify_the_boundary_before_graph_is_called(self):
         with patch.object(library.ExpressionFunction, "graph") as graph:
             with self.assertRaisesRegex(CalculationError, "Use \\* for multiplication") as raised:
-                compute_curve("ExpressionFunction", {"expression": "2x + 1"})
+                compute_curve("ExpressionFunction", {"expression": "2x +"})
         self.assertEqual(raised.exception.source, "input")
         graph.assert_not_called()
 
@@ -194,6 +224,7 @@ class ValidationTests(unittest.TestCase):
     def test_expression_rejects_object_access_and_resource_abuse(self):
         for expression in [
             "__import__('os')", "x.__class__", "(1).__class__.__mro__",
+            "6x.__class__", "6__import__('os')", "xsin(x)", "pix",
             "[x for x in (1,2)]", "sin.__globals__", "sin(x)[0]",
             "'string'", "True", "unknown(x)", "lambda: 1", "[1]*10000000",
             "1&2", "1<<2", "1//2",

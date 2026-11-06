@@ -182,6 +182,63 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("fixture library failure", self.window.error_label.text())
         self.assertIsNone(self.window.current_curve)
 
+    def test_implicit_coefficient_6x_plots_and_exports_real_library_expression(self):
+        import marksfuncs.functions as library
+
+        self.window.select_function("ExpressionFunction")
+        control = self.window.parameters.controls["expression"]
+        control.setFocus()
+        control.selectAll()
+        original_graph = library.ExpressionFunction.graph
+        with patch.object(library.ExpressionFunction, "graph", autospec=True, side_effect=original_graph) as graph:
+            QTest.keyClicks(control, "6x")
+            QTest.qWait(250)
+        self.assertIsNotNone(self.window.current_curve)
+        self.assertFalse(self.window.error_label.isVisible())
+        self.assertEqual(control.text(), "6x")
+        graph.assert_called_once()
+        self.assertEqual(graph.call_args.args[0].expression.replace(" ", ""), "6*x")
+        np.testing.assert_allclose(self.window.current_curve.y, 6 * self.window.current_curve.x)
+        source = self.export("py", "six-times-x.py").read_text(encoding="utf-8")
+        with patch.object(library.ExpressionFunction, "graph", autospec=True) as exported_graph:
+            namespace = {}
+            exec(compile(source, "six-times-x.py", "exec"), namespace)
+        self.assertEqual(namespace["expression"].replace(" ", ""), "6*x")
+        exported_graph.assert_called_once_with(namespace["f"])
+        self.assertEqual(namespace["f"].expression, namespace["expression"])
+
+    def test_historical_raw_6x_session_restores_and_resaves_unchanged(self):
+        historical = {
+            "version": 1,
+            "selected": "ExpressionFunction",
+            "functions": {
+                "ExpressionFunction": {
+                    "parameters": {"expression": "6x"}, "x_range": [-4.5, 8.25], "points": 517,
+                },
+            },
+            "comparisons": [{
+                "key": "ExpressionFunction", "parameters": {"expression": "6x"},
+                "x_range": [-2, 2], "points": 31,
+            }],
+        }
+        path = self.path("historical-six-times-x.mfuncs")
+        path.write_text(json.dumps(historical), encoding="utf-8")
+        with patch("marksfuncs_ui.main_window.QFileDialog.getOpenFileName", return_value=(str(path), "")), patch(
+            "marksfuncs_ui.main_window.QMessageBox.warning"
+        ) as warning:
+            self.window.open_project()
+        warning.assert_not_called()
+        self.assertEqual(self.window.spec.key, "ExpressionFunction")
+        self.assertEqual(self.window.parameters.controls["expression"].text(), "6x")
+        self.assertEqual(self.window.project_state(), historical)
+        np.testing.assert_allclose(self.window.current_curve.y, 6 * self.window.current_curve.x)
+        self.assertEqual(len(self.window.comparison_curves), 1)
+        pinned = self.window.comparison_curves[0]
+        np.testing.assert_allclose(pinned.y, 6 * pinned.x)
+        with patch("marksfuncs_ui.main_window.QFileDialog.getSaveFileName", return_value=(str(path), "")):
+            self.assertTrue(self.window.save_project())
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), historical)
+
     def test_live_expression_syntax_error_clears_when_valid_input_is_plotted(self):
         self.window.select_function("ExpressionFunction")
         control = self.window.parameters.controls["expression"]

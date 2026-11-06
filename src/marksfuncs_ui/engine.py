@@ -7,11 +7,13 @@ main thread: Matplotlib global state is not safe for concurrent calculations.
 import ast
 from dataclasses import dataclass
 import inspect
+import io
 import keyword
 import math
 import operator
 import re
 import sys
+import tokenize
 import warnings as python_warnings
 from unittest.mock import patch
 
@@ -82,6 +84,38 @@ _AST_NODES = (
 )
 
 
+def _insert_implicit_multiplication(expression):
+    """Insert operators between math factors without splitting identifiers.
+
+    Python's tokenizer preserves scientific numbers and names such as log10.
+    The resulting expression still passes through the full AST validation.
+    """
+    ignored = {tokenize.ENDMARKER, tokenize.NEWLINE, tokenize.NL,
+               tokenize.INDENT, tokenize.DEDENT}
+    tokens = [token for token in tokenize.generate_tokens(io.StringIO(expression).readline)
+              if token.type not in ignored]
+    offsets = []
+    position = 0
+    for line in expression.splitlines(keepends=True):
+        offsets.append(position)
+        position += len(line)
+    insertions = []
+    for previous, current in zip(tokens, tokens[1:]):
+        left_factor = (previous.type == tokenize.NUMBER
+                       or previous.type == tokenize.NAME and previous.string in _CONSTANTS
+                       or previous.string == ")")
+        right_factor = (current.type == tokenize.NUMBER
+                        or current.type == tokenize.NAME and current.string in _CONSTANTS | _FUNCTIONS
+                        or current.string == "(")
+        adjacent_numbers = previous.type == current.type == tokenize.NUMBER
+        if left_factor and right_factor and not adjacent_numbers:
+            row, column = current.start
+            insertions.append(offsets[row - 1] + column)
+    for position in reversed(insertions):
+        expression = expression[:position] + "*" + expression[position:]
+    return expression
+
+
 def validate_expression(expression: str) -> str:
     """Normalize math notation and validate input before marksfuncs evaluates it.
 
@@ -92,8 +126,9 @@ def validate_expression(expression: str) -> str:
         raise CalculationError("Enter a mathematical expression of 1 to 1000 characters.")
     expression = re.sub(r"\bln(?=\s*\()", "log", expression.strip().replace("^", "**"))
     try:
+        expression = _insert_implicit_multiplication(expression)
         tree = ast.parse(expression, mode="eval")
-    except (SyntaxError, RecursionError) as error:
+    except (SyntaxError, RecursionError, tokenize.TokenError) as error:
         raise CalculationError("Invalid expression. Use * for multiplication and ** or ^ for powers, for example 2*x + x**2.") from error
     nodes = list(ast.walk(tree))
     if len(nodes) > 160:

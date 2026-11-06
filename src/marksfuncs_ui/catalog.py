@@ -213,7 +213,7 @@ CATALOG = (
          "x > 0; h, c, k and T must be positive.", (p("h", "Constant h", 1, 0.1, 10), p("k", "Constant k", 1, 0.1, 10), p("c", "Speed c", 1, 0.1, 10), p("T", "Temperature T", 1, 0.1, 10)), (0.1, 5),
          note="Uses normalized units. The library computes this factor without the full blackbody radiance prefactor."),
     spec("ExpressionFunction", "Expression", "Expression", "f(x) = expression",
-         "Combine functions and operators: sin(x), cos(x), exp(x), log(x), sqrt(x), pi and e. Use ** for powers.",
+         "Combine functions and operators: sin(x), cos(x), exp(x), log(x), sqrt(x), pi and e. Use ** or ^ for powers; 6x and 2(x+1) are accepted.",
          "Depends on the expression. Only supported mathematical operations and function names are accepted.",
          (text("expression", "Expression", "sin(x) + 0.2*x**2"),)),
 )
