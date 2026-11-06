@@ -96,7 +96,7 @@ class ParameterPanel(QWidget):
             row = self._parameter_row(parameter, assigned[parameter.key])
             self._layout.addWidget(row)
         if not spec.parameters:
-            note = _label("Esta función no necesita parámetros. Ajusta el intervalo para explorarla.", "ParamHelp")
+            note = _label("No parameters.", "ParamHelp")
             note.setWordWrap(True)
             self._layout.addWidget(note)
 
@@ -154,7 +154,7 @@ class ParameterPanel(QWidget):
             slider_row.addWidget(_label(_format_number(parameter.minimum), "ParamEndpoint"))
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setObjectName("ParameterSlider")
-            slider.setAccessibleName(f"Ajustar {parameter.label}")
+            slider.setAccessibleName(f"Adjust {parameter.label}")
             slider.setToolTip(parameter.help)
             span = parameter.maximum - parameter.minimum
             # Limit slider resolution; manual numeric edits retain their own precision.
@@ -222,7 +222,7 @@ class RangePanel(QWidget):
         bounds.setSpacing(10)
         self.x_min = _number_input()
         self.x_max = _number_input()
-        for text, control in (("Desde x", self.x_min), ("Hasta x", self.x_max)):
+        for text, control in (("x min", self.x_min), ("x max", self.x_max)):
             column = QVBoxLayout()
             column.setSpacing(5)
             label = _label(text, "ParamHelp")
@@ -235,15 +235,15 @@ class RangePanel(QWidget):
             bounds.addLayout(column, 1)
         layout.addLayout(bounds)
         sampling = QHBoxLayout()
-        label = _label("Puntos de muestreo", "ParamLabel")
+        label = _label("Samples", "ParamLabel")
         sampling.addWidget(label, 1)
         self.points = _number_input(integer=True)
         self.points.setRange(2, 4000)
         self.points.setSingleStep(50)
         self.points.setFixedWidth(100)
         self.points.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.points.setAccessibleName("Puntos de muestreo")
-        self.points.setToolTip("Número de valores calculados por marksfuncs dentro del intervalo.")
+        self.points.setAccessibleName("Sample count")
+        self.points.setToolTip("Number of samples calculated by marksfuncs within the interval.")
         label.setBuddy(self.points)
         sampling.addWidget(self.points)
         layout.addLayout(sampling)

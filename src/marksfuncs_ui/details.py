@@ -20,7 +20,7 @@ class DetailsPanel(QWidget):
         tabs = QHBoxLayout()
         tabs.setSpacing(0)
         self.group = QButtonGroup(self)
-        for index, text in enumerate(("Cómo funciona", "Código Python", "Tabla de valores")):
+        for index, text in enumerate(("About", "Python", "Values")):
             button = QPushButton(text)
             button.setObjectName("Tab")
             button.setCheckable(True)
@@ -28,7 +28,7 @@ class DetailsPanel(QWidget):
             self.group.addButton(button, index)
             tabs.addWidget(button)
         tabs.addStretch()
-        self.copy_button = QPushButton("Copiar código")
+        self.copy_button = QPushButton("Copy code")
         self.copy_button.setObjectName("Ghost")
         tabs.addWidget(self.copy_button)
         layout.addLayout(tabs)
@@ -37,7 +37,7 @@ class DetailsPanel(QWidget):
         self.explanation.setOpenExternalLinks(False)
         self.code = QPlainTextEdit()
         self.code.setReadOnly(True)
-        self.code.setAccessibleName("Código Python generado con marksfuncs")
+        self.code.setAccessibleName("Generated marksfuncs Python code")
         table_page = QWidget()
         table_layout = QVBoxLayout(table_page)
         table_layout.setContentsMargins(8, 4, 8, 0)
@@ -49,7 +49,7 @@ class DetailsPanel(QWidget):
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        self.table.setAccessibleName("Coordenadas devueltas por marksfuncs")
+        self.table.setAccessibleName("Coordinates returned by marksfuncs")
         table_layout.addWidget(self.table_note)
         table_layout.addWidget(self.table)
         for page in (self.explanation, self.code, table_page):
@@ -63,11 +63,11 @@ class DetailsPanel(QWidget):
             f"<li><b>{escape(p.key)}</b> · {escape(p.label)}. {escape(p.help)}</li>"
             for p in spec.parameters
         )
-        note = f"<p style='color:#966d35'>{escape(spec.note)}</p>" if spec.note else ""
+        note = f"<p style='color:#6a7293'>{escape(spec.note)}</p>" if spec.note else ""
         self.explanation.setHtml(
-            "<html><body style='font-family:Manrope;font-size:12px;color:#536c60'>"
-            f"<p style='color:#254b41'>{escape(spec.description)}</p>"
-            f"<p><b>Dominio y uso</b> · {escape(spec.domain)}</p>"
+            "<html><body style='font-family:Manrope;font-size:12px;color:#626b82'>"
+            f"<p style='color:#303b5b'>{escape(spec.description)}</p>"
+            f"<p><b>Domain</b> · {escape(spec.domain)}</p>"
             f"<ul>{parameters}</ul>{note}</body></html>"
         )
 
@@ -78,7 +78,7 @@ class DetailsPanel(QWidget):
         self.table.clearContents()
         if curve is None:
             self.table.setRowCount(0)
-            self.table_note.setText("Calcula una función para consultar sus valores.")
+            self.table_note.setText("No samples.")
             return
         series = curve.series
         headers = ["m" if curve.class_name == "Ackermann" else "x"]
@@ -98,8 +98,8 @@ class DetailsPanel(QWidget):
                 if item.colors is not None:
                     values.append(item.colors[index] if index < len(item.colors) else np.nan)
             for column, value in enumerate(values):
-                text = f"{value:.7g}" if np.isfinite(value) else "sin valor real"
+                text = f"{value:.7g}" if np.isfinite(value) else "undefined"
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(row, column, item)
-        self.table_note.setText(f"{len(indices)} de {count} puntos · Exportar CSV guarda todas las muestras.")
+        self.table_note.setText(f"{len(indices)} / {count} samples")

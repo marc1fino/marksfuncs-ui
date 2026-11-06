@@ -5,6 +5,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,12 +14,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PyQt6.QtCore import QPoint, QLocale, Qt
-from PyQt6.QtGui import QCloseEvent, QImage
+from PyQt6.QtGui import QCloseEvent, QColor, QImage, QPalette
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QMessageBox, QScrollArea
+from PyQt6.QtWidgets import (
+    QApplication, QCheckBox, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QScrollArea,
+)
 
 from marksfuncs_ui.catalog import CATALOG
-from marksfuncs_ui.engine import unavailable_reason
+from marksfuncs_ui.engine import CalculationError, unavailable_reason
 from marksfuncs_ui.main_window import MainWindow
 from marksfuncs_ui.theme import STYLE, load_fonts
 
@@ -83,6 +87,28 @@ class MainWindowTests(unittest.TestCase):
         control.selectAll()
         QTest.keyClicks(control, text)
 
+    def assert_english_page(self):
+        self.app.processEvents()
+        spanish_copy = re.compile(
+            r"\b(?:función|funciones|muestras|gráfica|calcular|guardar|abrir|"
+            r"restablecer|comportamiento|explora|laboratorio|polinomio|pendiente|"
+            r"amplitud|sucesiones|señales|parámetros)\b|"
+            r"de una idea|asigna valores|observa el cambio|dominio y uso|"
+            r"sin valor real|coordenadas devueltas|no implementa graph",
+            re.IGNORECASE,
+        )
+        texts = [self.window.details.explanation.toPlainText(), self.window.windowTitle()]
+        for widget in self.window.findChildren((QLabel, QPushButton, QCheckBox, QLineEdit)):
+            texts.extend((widget.text(), widget.toolTip(), widget.accessibleName()))
+            if isinstance(widget, QLineEdit):
+                texts.append(widget.placeholderText())
+        self.assertIsNone(spanish_copy.search("\n".join(texts)))
+        self.assertEqual(self.window.title.font().family(), "Space Grotesk")
+        for control in (*self.window.parameters.controls.values(), self.window.range_panel.x_min,
+                        self.window.range_panel.x_max, self.window.range_panel.points,
+                        self.window.live, self.window.animations, self.window.calculate_button):
+            self.assertEqual(control.font().family(), "Manrope")
+
     def test_all_functions_select_with_real_curve_or_explicit_upstream_limitation(self):
         for spec in CATALOG:
             with self.subTest(function=spec.key):
@@ -90,17 +116,90 @@ class MainWindowTests(unittest.TestCase):
                 self.assertEqual(self.window.spec.key, spec.key)
                 self.assertEqual(self.window.title.text(), spec.name)
                 self.assertIn(spec.description, self.window.details.explanation.toPlainText())
+                self.assert_english_page()
                 if unavailable_reason(spec):
                     self.assertFalse(self.window.calculate_button.isEnabled())
                     self.assertFalse(self.window.pin_button.isEnabled())
                     self.assertIsNone(self.window.current_curve)
-                    self.assertIn("no implementa graph", self.window.error_label.text())
+                    self.assertIn("does not implement graph", self.window.error_label.text())
                     self.assertEqual(self.window.details.table.rowCount(), 0)
                 else:
                     self.assertTrue(self.window.calculate_button.isEnabled())
                     self.assertIsNotNone(self.window.current_curve)
                     self.assertTrue(self.window.details.table.rowCount())
                     self.assertIn(f"from marksfuncs.functions import {spec.key}", self.window.details.code.toPlainText())
+
+    def test_minimal_brand_and_blue_plot_replace_decorative_copy(self):
+        self.assertEqual(self.window.windowTitle(), "marksfuncs-ui")
+        brand = self.window.findChild(QLabel, "Brand")
+        self.assertEqual(brand.text(), "marksfuncs-ui")
+        self.assertEqual(brand.font().family(), "Space Grotesk")
+        brand_color = brand.palette().color(QPalette.ColorRole.WindowText)
+        self.assertTrue(200 <= brand_color.hsvHue() <= 260)
+        self.assertGreater(brand_color.hsvSaturation(), 150)
+        active_color = QColor(self.window.plot._curves[-1]["color"])
+        self.assertTrue(200 <= active_color.hsvHue() <= 260)
+        self.assertGreater(active_color.hsvSaturation(), 150)
+        self.assertFalse(hasattr(self.window, "subtitle"))
+        self.assertFalse(hasattr(self.window, "sample_info"))
+        decorative_copy = re.compile(
+            r"from an idea|a space for|explore.{0,20}understand|function laboratory|"
+            r"laboratory of functions|assign values|watch.{0,15}change|"
+            r"explore its behavior|your own values|marksfuncs data|/\s*studio",
+            re.IGNORECASE,
+        )
+        label_text = "\n".join(widget.text() for widget in self.window.findChildren(QLabel))
+        self.assertIsNone(decorative_copy.search(label_text))
+
+    def test_expression_math_notation_is_evaluated_by_marksfuncs(self):
+        self.window.select_function("ExpressionFunction")
+        self.window.range_panel.set_values((0.1, 2), 101)
+        for expression, expected in (("x^2", np.square), ("ln(x)", np.log)):
+            with self.subTest(expression=expression):
+                self.window.parameters.controls["expression"].setText(expression)
+                self.window.calculate()
+                self.assertIsNotNone(self.window.current_curve)
+                self.assertFalse(self.window.error_label.isVisible())
+                np.testing.assert_allclose(self.window.current_curve.y, expected(self.window.current_curve.x))
+                self.assertEqual(self.window.project_state()["functions"]["ExpressionFunction"]["parameters"]["expression"], expression)
+                code = self.window.details.code.toPlainText()
+                self.assertIn("from marksfuncs.functions import ExpressionFunction", code)
+                self.assertIn("f.graph()", code)
+
+    def test_error_label_identifies_input_and_library_failures(self):
+        self.window.select_function("ExpressionFunction")
+        self.window.parameters.controls["expression"].setText("sin(")
+        self.window.calculate()
+        self.assertTrue(self.window.error_label.isVisible())
+        self.assertTrue(self.window.error_label.text().startswith("Input:"))
+        self.assertIsNone(self.window.current_curve)
+        self.window.parameters.controls["expression"].setText("sin(x)")
+        with patch("marksfuncs_ui.main_window.compute_curve", side_effect=CalculationError(
+            "fixture library failure", source="marksfuncs"
+        )):
+            self.window.calculate()
+        self.assertTrue(self.window.error_label.text().startswith("marksfuncs:"))
+        self.assertIn("fixture library failure", self.window.error_label.text())
+        self.assertIsNone(self.window.current_curve)
+
+    def test_live_expression_syntax_error_clears_when_valid_input_is_plotted(self):
+        self.window.select_function("ExpressionFunction")
+        control = self.window.parameters.controls["expression"]
+        self.assertTrue(self.window.live.isChecked())
+        control.setText("sin(")
+        self.assertIsNone(self.window.current_curve)
+        self.assertEqual(self.window.details.table.rowCount(), 0)
+        self.assertFalse(self.window.plot._curves)
+        QTest.qWait(250)
+        self.assertTrue(self.window.error_label.text().startswith("Input:"))
+        self.assertIsNone(self.window.current_curve)
+        control.setText("sin(x)")
+        self.assertIsNone(self.window.current_curve)
+        QTest.qWait(250)
+        self.assertIsNotNone(self.window.current_curve)
+        self.assertFalse(self.window.error_label.isVisible())
+        self.assertTrue(self.window.details.table.rowCount())
+        np.testing.assert_allclose(self.window.current_curve.y, np.sin(self.window.current_curve.x))
 
     def test_pinned_curve_survives_parameter_edits_and_function_switches(self):
         self.window.select_function("Linear")

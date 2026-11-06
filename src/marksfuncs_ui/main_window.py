@@ -2,10 +2,8 @@
 
 import copy
 import csv
-from importlib.metadata import version
 from pathlib import Path
 
-import numpy as np
 from PyQt6.QtCore import QSize, Qt, QSettings, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
@@ -19,11 +17,12 @@ from .controls import ParameterPanel, RangePanel
 from .details import DetailsPanel
 from .engine import compute_curve, generate_code, unavailable_reason
 from .plot_widget import PlotWidget
+from .motion import FadeTransition
 from .session import load_session, save_session
 from .theme import app_icon
 
 
-COLORS = ("#ce9240", "#9371b2", "#498fb2", "#cb7383")
+COLORS = ("#b08a38", "#9066c4", "#4094dc", "#cd6c90")
 
 
 def label(text="", name="", wrap=False):
@@ -53,7 +52,7 @@ def divider():
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("marksfuncs Studio · Laboratorio de funciones")
+        self.setWindowTitle("marksfuncs-ui")
         self.setWindowIcon(app_icon())
         self.resize(1480, 920)
         self.setMinimumSize(1080, 720)
@@ -77,7 +76,6 @@ class MainWindow(QMainWindow):
         self._shortcuts()
         self._populate_catalog()
         self._select_key("Trigonometric")
-        self.statusBar().showMessage(f"marksfuncs {version('marksfuncs')} · Cálculos de tu librería · Todo en tu equipo")
 
     def _build_ui(self):
         workspace = QWidget()
@@ -92,13 +90,10 @@ class MainWindow(QMainWindow):
         icon = QLabel()
         icon.setPixmap(app_icon().pixmap(QSize(34, 34)))
         row.addWidget(icon)
-        row.addWidget(label("marksfuncs", "Brand"))
-        row.addWidget(label("/  STUDIO", "Eyebrow"))
+        row.addWidget(label("marksfuncs-ui", "Brand"))
         row.addStretch()
-        row.addWidget(label("UN ESPACIO PARA ENTENDER FUNCIONES", "Eyebrow"))
-        row.addSpacing(22)
-        row.addWidget(button("Abrir sesión", self.open_project, "Ghost"))
-        row.addWidget(button("Guardar sesión", self.save_project))
+        row.addWidget(button("Open", self.open_project, "Ghost"))
+        row.addWidget(button("Save", self.save_project))
         outer.addWidget(header)
 
         body = QSplitter(Qt.Orientation.Horizontal)
@@ -124,27 +119,25 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         top = QHBoxLayout()
         top.setContentsMargins(14, 0, 12, 4)
-        top.addWidget(label("EXPLORAR", "Section"))
+        top.addWidget(label("FUNCTIONS", "Section"))
         top.addStretch()
         top.addWidget(label(str(len(CATALOG)), "Badge"))
         layout.addLayout(top)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Buscar una función…")
-        self.search.setAccessibleName("Buscar funciones")
+        self.search.setPlaceholderText("Search…")
+        self.search.setAccessibleName("Search functions")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._populate_catalog)
         layout.addWidget(self.search)
         self.catalog_list = QListWidget()
-        self.catalog_list.setAccessibleName("Catálogo de funciones")
+        self.catalog_list.setAccessibleName("Function catalog")
         self.catalog_list.currentItemChanged.connect(self._catalog_changed)
         layout.addWidget(self.catalog_list, 1)
-        self.search_empty = label("No hay funciones con ese nombre.", "Subtitle", True)
+        self.search_empty = label("No matching functions.", "Subtitle", True)
         self.search_empty.hide()
         layout.addWidget(self.search_empty)
         layout.addWidget(divider())
-        layout.addWidget(label("De una idea\na una curva.", "Formula"))
-        layout.addWidget(label("Explora · ajusta · comprende", "Subtitle"))
-        layout.addWidget(button("Guía y atajos   ↗", self.show_guide, "Ghost"))
+        layout.addWidget(button("Help", self.show_guide, "Ghost"))
         return sidebar
 
     def _build_center(self):
@@ -154,15 +147,12 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(26, 23, 26, 20)
         layout.setSpacing(13)
         title_row = QHBoxLayout()
-        title_row.addWidget(label("LABORATORIO DE FUNCIONES", "Eyebrow"))
+        self.title = label("", "Title")
+        title_row.addWidget(self.title, 1)
         title_row.addStretch()
         self.category = label("", "Badge")
         title_row.addWidget(self.category)
         layout.addLayout(title_row)
-        self.title = label("", "Title")
-        layout.addWidget(self.title)
-        self.subtitle = label("", "Subtitle", True)
-        layout.addWidget(self.subtitle)
         self.error_label = label("", "Error", True)
         self.error_label.hide()
         layout.addWidget(self.error_label)
@@ -179,9 +169,9 @@ class MainWindow(QMainWindow):
         self.formula = label("", "Formula")
         self.formula.setWordWrap(True)
         plot_top.addWidget(self.formula, 1)
-        plot_top.addWidget(button("Centrar", self.fit_view, "Ghost"))
-        export = button("Exportar…", self.export_menu)
-        export.setAccessibleName("Exportar gráfica, datos o código")
+        plot_top.addWidget(button("Fit", self.fit_view, "Ghost"))
+        export = button("Export…", self.export_menu)
+        export.setAccessibleName("Export plot, data or Python")
         plot_top.addWidget(export)
         plot_layout.addLayout(plot_top)
         self.plot = PlotWidget()
@@ -191,7 +181,6 @@ class MainWindow(QMainWindow):
         self.graph_info = label("", "Subtitle")
         plot_bottom.addWidget(self.graph_info)
         plot_bottom.addStretch()
-        plot_bottom.addWidget(label("Arrastra para mover · rueda para ampliar", "Subtitle"))
         plot_layout.addLayout(plot_bottom)
         vertical.addWidget(plot_card)
         detail_card = QFrame()
@@ -199,13 +188,13 @@ class MainWindow(QMainWindow):
         detail_layout = QVBoxLayout(detail_card)
         detail_layout.setContentsMargins(2, 0, 2, 2)
         self.details = DetailsPanel()
+        self.details_transition = FadeTransition(self.details.stack)
+        self.details.stack.currentChanged.connect(lambda _: self.details_transition.start())
         self.details.copy_button.clicked.connect(self.copy_code)
         detail_layout.addWidget(self.details)
         vertical.addWidget(detail_card)
         vertical.setSizes([470, 220])
         layout.addWidget(vertical, 1)
-        self.sample_info = label("", "Subtitle")
-        layout.addWidget(self.sample_info)
         return center
 
     def _build_inspector(self):
@@ -219,9 +208,8 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         top.addWidget(label("VARIABLES", "Section"))
         top.addStretch()
-        top.addWidget(button("Restablecer", self.reset_parameters, "Ghost"))
+        top.addWidget(button("Reset", self.reset_parameters, "Ghost"))
         layout.addLayout(top)
-        layout.addWidget(label("Asigna valores. Observa el cambio.", "Subtitle"))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -233,38 +221,39 @@ class MainWindow(QMainWindow):
         self.parameters.valueChanged.connect(self._edited)
         controls_layout.addWidget(self.parameters)
         controls_layout.addWidget(divider())
-        controls_layout.addWidget(label("INTERVALO Y PRECISIÓN", "Section"))
+        controls_layout.addWidget(label("DOMAIN", "Section"))
         self.range_panel = RangePanel()
         self.range_panel.changed.connect(self._range_edited)
         controls_layout.addWidget(self.range_panel)
         controls_layout.addWidget(divider())
-        self.live = QCheckBox("Actualizar al cambiar valores")
+        self.live = QCheckBox("Live update")
         self.live.setChecked(True)
         self.live.toggled.connect(lambda checked: self._schedule() if checked else self.debounce.stop())
         controls_layout.addWidget(self.live)
-        self.animations = QCheckBox("Animar las curvas")
+        self.animations = QCheckBox("Transitions")
         self.animations.setChecked(self.settings.value("animations", True, type=bool))
         self.plot.set_animations_enabled(self.animations.isChecked())
         self.animations.toggled.connect(self._set_animations)
         controls_layout.addWidget(self.animations)
         controls_layout.addStretch()
         scroll.setWidget(content)
+        self.inspector_transition = FadeTransition(content)
+        self.inspector_transition.set_enabled(self.animations.isChecked())
+        self.details_transition.set_enabled(self.animations.isChecked())
         layout.addWidget(scroll, 1)
-        self.calculate_button = button("Trazar función    ↗", self.calculate, "Primary")
+        self.calculate_button = button("Plot", self.calculate, "Primary")
         layout.addWidget(self.calculate_button)
-        self.pin_button = button("+  Fijar para comparar", self.pin_curve)
+        self.pin_button = button("+ Compare", self.pin_curve)
         layout.addWidget(self.pin_button)
         layout.addWidget(divider())
         comparison_header = QHBoxLayout()
-        comparison_header.addWidget(label("COMPARACIÓN", "Section"))
+        comparison_header.addWidget(label("COMPARISONS", "Section"))
         comparison_header.addStretch()
-        comparison_header.addWidget(button("Vaciar", self.clear_comparisons, "Ghost"))
+        comparison_header.addWidget(button("Clear", self.clear_comparisons, "Ghost"))
         layout.addLayout(comparison_header)
         self.comparison_list = QVBoxLayout()
         self.comparison_list.setSpacing(3)
         layout.addLayout(self.comparison_list)
-        self.comparison_note = label("Fija una curva y cambia sus variables\npara ver las diferencias.", "Subtitle", True)
-        layout.addWidget(self.comparison_note)
         return inspector
 
     def _shortcuts(self):
@@ -327,7 +316,6 @@ class MainWindow(QMainWindow):
                                     state["points"] if state else self.spec.points)
         self.title.setText(self.spec.name)
         self.category.setText(self.spec.category)
-        self.subtitle.setText(f"{self.spec.key}  /  Explora su comportamiento con tus propios valores.")
         self.formula.setText(self.spec.formula)
         axes = ("m", "n") if key == "Ackermann" else ("x", "f(x)")
         self.plot.set_axis_labels(*axes)
@@ -336,9 +324,13 @@ class MainWindow(QMainWindow):
         self._selecting = False
         self._fit_next = True
         self.calculate()
+        self.inspector_transition.start()
+        self.details_transition.start()
 
     def _set_animations(self, enabled):
         self.plot.set_animations_enabled(enabled)
+        self.inspector_transition.set_enabled(enabled)
+        self.details_transition.set_enabled(enabled)
         self.settings.setValue("animations", enabled)
 
     def _range_edited(self):
@@ -352,9 +344,8 @@ class MainWindow(QMainWindow):
         self.current_curve = None
         self.details.set_curve(None)
         self._render_curves()
-        self.sample_info.setText("Variables modificadas · Traza la función para obtener nuevas muestras.")
         self.pin_button.setEnabled(False)
-        self.graph_info.setText("Cambios pendientes de trazar")
+        self.graph_info.setText("Not plotted")
         self._update_code()
         self._schedule()
 
@@ -371,7 +362,8 @@ class MainWindow(QMainWindow):
             self.details.set_code(code)
             self.code_valid = True
         except (ValueError, TypeError) as error:
-            self.details.set_code(f"# Revisa las variables: {error}")
+            source = "marksfuncs" if getattr(error, "source", "") == "marksfuncs" else "Input"
+            self.details.set_code(f"# {source}: {error}")
             self.code_valid = False
         self.details.copy_button.setEnabled(self.code_valid)
 
@@ -389,10 +381,10 @@ class MainWindow(QMainWindow):
             self.current_curve = None
             self._curve_state = None
             self.details.set_curve(None)
-            self.error_label.setText(f"No se pudo trazar {self.spec.key}: {error}")
+            source = "marksfuncs" if getattr(error, "source", "") == "marksfuncs" else "Input"
+            self.error_label.setText(f"{source}: {error}")
             self.error_label.show()
-            self.graph_info.setText("Revisa los parámetros o el dominio")
-            self.sample_info.setText("La librería no ha devuelto una curva válida para estos valores.")
+            self.graph_info.setText("Plot unavailable")
             self.pin_button.setEnabled(False)
             self._render_curves()
             return
@@ -406,13 +398,7 @@ class MainWindow(QMainWindow):
             self.fit_view()
             self._fit_next = False
         count = len(self.current_curve.x)
-        self.graph_info.setText(f"{self.spec.key}   ·   {count:,} muestras".replace(",", " "))
-        values = self.current_curve.series[0].colors if self.spec.key == "Ackermann" else self.current_curve.y
-        finite = np.asarray(values)[np.isfinite(values)]
-        self.sample_info.setText(
-            f"DATOS DE MARKSFUNCS     mín. muestreado  {finite.min():.5g}     máx. muestreado  {finite.max():.5g}"
-            if len(finite) else "No hay valores reales finitos en este intervalo."
-        )
+        self.graph_info.setText(f"{count:,} points")
 
     def _render_curves(self):
         curves = []
@@ -423,7 +409,7 @@ class MainWindow(QMainWindow):
         if self.current_curve:
             for index, series in enumerate(self.current_curve.series):
                 curves.append({"x": series.x, "y": series.y, "label": series.label,
-                               "scatter": series.scatter, "color": ("#087f8c", "#478eb7")[index % 2], "values": series.colors})
+                               "scatter": series.scatter, "color": ("#2028ff", "#7b80ed")[index % 2], "values": series.colors})
         self.plot.set_curves(curves)
 
     def fit_view(self):
@@ -453,15 +439,15 @@ class MainWindow(QMainWindow):
         while self.comparison_list.count():
             item = self.comparison_list.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
         for index, snapshot in enumerate(self.comparisons):
             text = f"{index + 1}.  {BY_KEY[snapshot['key']].name}  ×"
             chip = button(text, lambda checked=False, i=index: self.remove_comparison(i), "Ghost")
             chip.setStyleSheet(f"color: {COLORS[index]}; text-align: left;")
-            chip.setToolTip(f"{snapshot['parameters']}\nClic para retirar esta curva")
-            chip.setAccessibleName(f"Retirar comparación {index + 1}: {snapshot['key']}")
+            chip.setToolTip(f"{snapshot['parameters']}\nClick to remove")
+            chip.setAccessibleName(f"Remove comparison {index + 1}: {snapshot['key']}")
             self.comparison_list.addWidget(chip)
-        self.comparison_note.setVisible(not self.comparisons)
         self.pin_button.setEnabled(self.current_curve is not None and len(self.comparisons) < 4)
 
     def remove_comparison(self, index):
@@ -484,17 +470,20 @@ class MainWindow(QMainWindow):
                 "functions": copy.deepcopy(self.function_states), "comparisons": copy.deepcopy(self.comparisons)}
 
     def save_project(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Guardar sesión", self.session_path or "mi-laboratorio.mfuncs", "Sesión marksfuncs (*.mfuncs)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save session", self.session_path or "session.mfuncs", "marksfuncs session (*.mfuncs)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not path:
             return False
         try:
             save_session(path, self.project_state())
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "No se pudo guardar", str(error))
+            QMessageBox.warning(self, "Save failed", str(error))
             return False
         self.session_path = path
         self.dirty = False
-        self.statusBar().showMessage(f"Sesión guardada en {path}", 6000)
+        self.statusBar().showMessage(f"Saved {Path(path).name}", 4000)
         return True
 
     def _confirm_discard(self):
@@ -502,7 +491,7 @@ class MainWindow(QMainWindow):
             self.dirty = True
         if not self.dirty:
             return True
-        answer = QMessageBox.question(self, "Cambios sin guardar", "¿Quieres guardar tus variables y comparaciones antes de continuar?",
+        answer = QMessageBox.question(self, "Unsaved changes", "Save this session before continuing?",
                                       QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
         if answer == QMessageBox.StandardButton.Save:
             return self.save_project()
@@ -511,14 +500,17 @@ class MainWindow(QMainWindow):
     def open_project(self):
         if not self._confirm_discard():
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Abrir sesión", "", "Sesión marksfuncs (*.mfuncs *.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open session", "", "marksfuncs session (*.mfuncs *.json)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not path:
             return
         try:
             state = load_session(path)
             curves = [compute_curve(s["key"], s["parameters"], s["x_range"], s["points"]) for s in state["comparisons"]]
         except (OSError, ValueError, RuntimeError) as error:
-            QMessageBox.warning(self, "No se pudo abrir", str(error))
+            QMessageBox.warning(self, "Open failed", str(error))
             return
         self.spec = None
         self.function_states = state["functions"]
@@ -528,19 +520,19 @@ class MainWindow(QMainWindow):
         self._select_key(state["selected"])
         self._refresh_comparisons()
         self.dirty = False
-        self.statusBar().showMessage(f"Sesión recuperada: {Path(path).name}", 6000)
+        self.statusBar().showMessage(f"Opened {Path(path).name}", 4000)
 
     def copy_code(self):
         self._update_code()
         if not self.code_valid:
             return
         QApplication.clipboard().setText(self.details.code.toPlainText())
-        self.statusBar().showMessage("Código Python copiado", 3000)
+        self.statusBar().showMessage("Python copied", 3000)
 
     def export_menu(self):
         from PyQt6.QtWidgets import QMenu
         menu = QMenu(self)
-        for text, kind in (("Gráfica como PNG", "png"), ("Muestras como CSV", "csv"), ("Código Python", "py")):
+        for text, kind in (("Plot as PNG", "png"), ("Data as CSV", "csv"), ("Python script", "py")):
             action = menu.addAction(text)
             action.setEnabled(not unavailable_reason(self.spec) and (kind == "py" or self.current_curve is not None))
             action.triggered.connect(lambda checked=False, k=kind: self.export_file(k))
@@ -553,20 +545,23 @@ class MainWindow(QMainWindow):
         if kind == "py":
             self._update_code()
             if not self.code_valid:
-                QMessageBox.warning(self, "Revisa las variables", "El código necesita parámetros válidos para poder exportarse.")
+                QMessageBox.warning(self, "Invalid input", "Enter valid parameters before exporting.")
                 return
         elif state != self._curve_state:
             self.calculate()
         if kind != "py" and self.current_curve is None:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar", f"{self.spec.key}.{kind}", f"{kind.upper()} (*.{kind})")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export", f"{self.spec.key}.{kind}", f"{kind.upper()} (*.{kind})",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not path:
             return
         try:
             if kind == "png":
                 self.plot.finish_animation()
                 if not self.plot.grab().save(path, "PNG"):
-                    raise OSError("No se pudo escribir la imagen.")
+                    raise OSError("Could not write the image.")
             elif kind == "py":
                 Path(path).write_text(self.details.code.toPlainText(), encoding="utf-8")
             elif kind == "csv" and self.current_curve:
@@ -587,23 +582,18 @@ class MainWindow(QMainWindow):
                                 row.append(item.colors[index] if index < len(item.colors) else "")
                         writer.writerow(row)
         except OSError as error:
-            QMessageBox.warning(self, "No se pudo exportar", str(error))
+            QMessageBox.warning(self, "Export failed", str(error))
             return
-        self.statusBar().showMessage(f"Exportado: {path}", 5000)
+        self.statusBar().showMessage(f"Exported {Path(path).name}", 4000)
 
     def show_guide(self):
-        QMessageBox.information(self, "Tu laboratorio de funciones",
-            "1. Elige una función en el catálogo o búscala con Ctrl+F.\n"
-            "2. Asigna variables con los deslizadores o escribe valores exactos.\n"
-            "3. Ajusta el intervalo de x y el número de muestras.\n"
-            "4. Fija hasta cuatro curvas para compararlas.\n\n"
-            "La gráfica usa las muestras de marksfuncs. Los valores fuera del dominio real se muestran como huecos. "
-            "Cambiar la vista no vuelve a muestrear: ajusta el intervalo para ampliar el dominio calculado.\n\n"
-            "Ctrl+Enter: trazar · Ctrl+R: restablecer variables\n"
-            "Ctrl+0: centrar vista · Ctrl+S: guardar · Ctrl+O: abrir\n"
-            "F1: esta guía · Doble clic en la gráfica: restablecer vista\n\n"
-            "Cómo funciona explica cada clase. Código Python reproduce la función activa. "
-            "CSV exporta sus muestras y PNG la vista con las comparaciones. Las sesiones conservan tus variables.")
+        QMessageBox.information(self, "marksfuncs-ui · Help",
+            "Choose a function, edit its variables, then plot. Compare keeps up to four snapshots.\n\n"
+            "Drag to pan; scroll to zoom. Change the domain to calculate new samples.\n\n"
+            "Ctrl+F  Search\nCtrl+Enter  Plot\nCtrl+R  Reset variables\n"
+            "Ctrl+0  Fit plot\nCtrl+S / Ctrl+O  Save / Open\nF1  Help\n\n"
+            "Python and CSV export the active function. PNG includes comparisons.\n"
+            "Calculations come from marksfuncs.functions; see engine.py → compute_curve().")
 
     def closeEvent(self, event):
         if self._confirm_discard():
